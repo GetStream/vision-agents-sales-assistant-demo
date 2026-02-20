@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -6,6 +8,8 @@ import 'package:stream_chat/stream_chat.dart' as chat;
 import 'package:stream_video_flutter/stream_video_flutter.dart';
 
 import 'overlay_screen.dart';
+
+enum _ErrorKind { serverUnreachable, other }
 
 /// Root widget that initialises Stream Video + Chat and shows the overlay.
 class OverlayApp extends StatefulWidget {
@@ -26,7 +30,8 @@ class _OverlayAppState extends State<OverlayApp> {
   late final StreamVideo _videoClient;
   late final chat.StreamChatClient _chatClient;
   bool _initialized = false;
-  String? _error;
+  _ErrorKind? _errorKind;
+  String? _errorDetail;
 
   @override
   void initState() {
@@ -37,7 +42,13 @@ class _OverlayAppState extends State<OverlayApp> {
   Future<({String token, String apiKey})> _fetchToken() async {
     final uri = Uri.parse('$_agentServerUrl/auth/token?user_id=$_userId');
 
-    final response = await http.get(uri);
+    final response = await http.get(uri).timeout(const Duration(seconds: 5));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(
+        'Server returned ${response.statusCode}: ${response.body}',
+        uri: uri,
+      );
+    }
     final body = json.decode(response.body) as Map<String, dynamic>;
     return (token: body['token'] as String, apiKey: body['apiKey'] as String);
   }
@@ -74,8 +85,25 @@ class _OverlayAppState extends State<OverlayApp> {
 
       setState(() => _initialized = true);
     } catch (e) {
-      setState(() => _error = e.toString());
+      final isUnreachable = e is SocketException ||
+          e is TimeoutException ||
+          (e is http.ClientException &&
+              e.message.contains('Connection refused'));
+
+      setState(() {
+        _errorKind =
+            isUnreachable ? _ErrorKind.serverUnreachable : _ErrorKind.other;
+        _errorDetail = e.toString();
+      });
     }
+  }
+
+  void _retry() {
+    setState(() {
+      _errorKind = null;
+      _errorDetail = null;
+    });
+    _init();
   }
 
   @override
@@ -117,10 +145,22 @@ class _OverlayAppState extends State<OverlayApp> {
   }
 
   Widget _buildBody() {
-    if (_error != null) {
+    if (_errorKind != null) {
+      if (_errorKind == _ErrorKind.serverUnreachable) {
+        return _StatusCard(
+          icon: Icons.cloud_off_rounded,
+          message:
+              'It looks like your server isn\'t running yet.\n'
+              'Please start your server and hit Reconnect.',
+          actionLabel: 'Reconnect',
+          onAction: _retry,
+        );
+      }
       return _StatusCard(
         icon: Icons.error_outline,
-        message: 'Failed to connect:\n$_error',
+        message: 'Failed to connect:\n$_errorDetail',
+        actionLabel: 'Retry',
+        onAction: _retry,
       );
     }
 
@@ -139,10 +179,17 @@ class _OverlayAppState extends State<OverlayApp> {
 }
 
 class _StatusCard extends StatelessWidget {
-  const _StatusCard({required this.icon, required this.message});
+  const _StatusCard({
+    required this.icon,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
 
   final IconData icon;
   final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -159,6 +206,22 @@ class _StatusCard extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
+            if (onAction != null && actionLabel != null) ...[
+              const SizedBox(height: 20),
+              TextButton(
+                onPressed: onAction,
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withValues(alpha: 0.08),
+                  foregroundColor: Colors.white.withValues(alpha: 0.7),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                ),
+                child: Text(actionLabel!),
+              ),
+            ],
           ],
         ),
       ),

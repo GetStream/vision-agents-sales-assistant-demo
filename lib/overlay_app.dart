@@ -1,6 +1,4 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -8,8 +6,8 @@ import 'package:stream_chat/stream_chat.dart' as chat;
 import 'package:stream_video_flutter/stream_video_flutter.dart';
 
 import 'overlay_screen.dart';
-
-enum _ErrorKind { serverUnreachable, other }
+import 'settings_screen.dart';
+import 'settings_service.dart';
 
 /// Root widget that initialises Stream Video + Chat and shows the overlay.
 class OverlayApp extends StatefulWidget {
@@ -20,40 +18,43 @@ class OverlayApp extends StatefulWidget {
 }
 
 class _OverlayAppState extends State<OverlayApp> {
-  // ---------------------------------------------------------------------------
-  // Configuration — the token is fetched from the Python agent server so that
-  // the Flutter app automatically uses the same Stream application.
-  // ---------------------------------------------------------------------------
   static const _userId = 'sales-assistant-user';
-  static const _agentServerUrl = 'http://localhost:8000';
 
-  late final StreamVideo _videoClient;
-  late final chat.StreamChatClient _chatClient;
+  StreamVideo? _videoClient;
+  chat.StreamChatClient? _chatClient;
+
+  bool _showSettings = false;
   bool _initialized = false;
-  _ErrorKind? _errorKind;
-  String? _errorDetail;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _init();
+    _boot();
   }
 
-  Future<({String token, String apiKey})> _fetchToken() async {
-    final uri = Uri.parse('$_agentServerUrl/auth/token?user_id=$_userId');
+  /// Connect on launch — settings always have a default server URL.
+  Future<void> _boot() async {
+    await _connect();
+  }
 
-    final response = await http.get(uri).timeout(const Duration(seconds: 5));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException(
-        'Server returned ${response.statusCode}: ${response.body}',
-        uri: uri,
-      );
-    }
+  /// Fetch a user token (and API key) from the agent server.
+  Future<({String token, String apiKey})> _fetchToken() async {
+    final base = SettingsService.agentServerUrl;
+    final uri = Uri.parse('$base/auth/token?user_id=$_userId');
+    final response = await http.get(uri);
     final body = json.decode(response.body) as Map<String, dynamic>;
     return (token: body['token'] as String, apiKey: body['apiKey'] as String);
   }
 
-  Future<void> _init() async {
+  /// Connect to Stream Video + Chat using the current settings.
+  Future<void> _connect() async {
+    setState(() {
+      _error = null;
+      _initialized = false;
+      _showSettings = false;
+    });
+
     try {
       final (:token, :apiKey) = await _fetchToken();
 
@@ -74,46 +75,45 @@ class _OverlayAppState extends State<OverlayApp> {
         },
         options: const StreamVideoOptions(logPriority: Priority.info),
       );
-      await _videoClient.connect();
+      await _videoClient!.connect();
 
-      // --- Stream Chat client (for receiving agent messages) ---
+      // --- Stream Chat client ---
       _chatClient = chat.StreamChatClient(apiKey, logLevel: chat.Level.WARNING);
-      await _chatClient.connectUser(
-        chat.User(id: _userId),
-        token,
-      );
+      await _chatClient!.connectUser(chat.User(id: _userId), token);
 
       setState(() => _initialized = true);
     } catch (e) {
-      final isUnreachable = e is SocketException ||
-          e is TimeoutException ||
-          (e is http.ClientException &&
-              e.message.contains('Connection refused'));
-
-      setState(() {
-        _errorKind =
-            isUnreachable ? _ErrorKind.serverUnreachable : _ErrorKind.other;
-        _errorDetail = e.toString();
-      });
+      setState(() => _error = e.toString());
     }
   }
 
-  void _retry() {
-    setState(() {
-      _errorKind = null;
-      _errorDetail = null;
-    });
-    _init();
+  /// Disconnect existing clients so we can reconnect with new settings.
+  Future<void> _disconnect() async {
+    if (_initialized) {
+      _chatClient?.disconnectUser();
+      _chatClient?.dispose();
+      _chatClient = null;
+      _videoClient?.disconnect();
+      StreamVideo.reset();
+      _videoClient = null;
+      _initialized = false;
+    }
+  }
+
+  /// Called when the user taps the gear icon to open settings.
+  void _openSettings() {
+    setState(() => _showSettings = true);
+  }
+
+  /// Called when the user saves settings.
+  Future<void> _onSettingsSaved() async {
+    await _disconnect();
+    await _connect();
   }
 
   @override
   void dispose() {
-    if (_initialized) {
-      _chatClient.disconnectUser();
-      _chatClient.dispose();
-      _videoClient.disconnect();
-      StreamVideo.reset();
-    }
+    _disconnect();
     super.dispose();
   }
 
@@ -132,8 +132,6 @@ class _OverlayAppState extends State<OverlayApp> {
       home: Scaffold(
         body: Container(
           decoration: BoxDecoration(
-            // Dark tint over the frosted glass so white text stays readable
-            // regardless of what's behind the window.
             color: const Color(0x50000000),
             borderRadius: BorderRadius.circular(16),
           ),
@@ -145,22 +143,14 @@ class _OverlayAppState extends State<OverlayApp> {
   }
 
   Widget _buildBody() {
-    if (_errorKind != null) {
-      if (_errorKind == _ErrorKind.serverUnreachable) {
-        return _StatusCard(
-          icon: Icons.cloud_off_rounded,
-          message:
-              'It looks like your server isn\'t running yet.\n'
-              'Please start your server and hit Reconnect.',
-          actionLabel: 'Reconnect',
-          onAction: _retry,
-        );
-      }
-      return _StatusCard(
-        icon: Icons.error_outline,
-        message: 'Failed to connect:\n$_errorDetail',
-        actionLabel: 'Retry',
-        onAction: _retry,
+    if (_showSettings) {
+      return SettingsScreen(onSaved: _onSettingsSaved);
+    }
+
+    if (_error != null) {
+      return _ErrorView(
+        message: _error!,
+        onOpenSettings: _openSettings,
       );
     }
 
@@ -172,24 +162,60 @@ class _OverlayAppState extends State<OverlayApp> {
     }
 
     return OverlayScreen(
-      videoClient: _videoClient,
-      chatClient: _chatClient,
+      videoClient: _videoClient!,
+      chatClient: _chatClient!,
+      agentServerUrl: SettingsService.agentServerUrl,
+      onOpenSettings: _openSettings,
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Helper widgets
+// -----------------------------------------------------------------------------
+
+class _ErrorView extends StatelessWidget {
+  const _ErrorView({required this.message, required this.onOpenSettings});
+
+  final String message;
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.white54),
+            const SizedBox(height: 16),
+            Text(
+              'Failed to connect:\n$message',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 20),
+            TextButton.icon(
+              onPressed: onOpenSettings,
+              icon: const Icon(Icons.settings, size: 16),
+              label: const Text('Open Settings'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white60,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
 class _StatusCard extends StatelessWidget {
-  const _StatusCard({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-  });
+  const _StatusCard({required this.icon, required this.message});
 
   final IconData icon;
   final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -206,22 +232,6 @@ class _StatusCard extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
-            if (onAction != null && actionLabel != null) ...[
-              const SizedBox(height: 20),
-              TextButton(
-                onPressed: onAction,
-                style: TextButton.styleFrom(
-                  backgroundColor: Colors.white.withValues(alpha: 0.08),
-                  foregroundColor: Colors.white.withValues(alpha: 0.7),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                ),
-                child: Text(actionLabel!),
-              ),
-            ],
           ],
         ),
       ),

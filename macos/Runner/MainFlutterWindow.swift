@@ -56,6 +56,23 @@ class MainFlutterWindow: NSWindow {
       contentView.layer?.borderColor = NSColor(white: 1.0, alpha: 0.08).cgColor
     }
 
+    // Method channel: let Flutter toggle screen-capture visibility.
+    let channel = FlutterMethodChannel(
+      name: "sales_assistant/window",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    channel.setMethodCallHandler { [weak self] (call, result) in
+      guard let self = self else { result(nil); return }
+      switch call.method {
+      case "setScreenCaptureVisible":
+        let visible = call.arguments as? Bool ?? false
+        self.sharingType = visible ? .readWrite : .none
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
     RegisterGeneratedPlugins(registry: flutterViewController)
     super.awakeFromNib()
   }

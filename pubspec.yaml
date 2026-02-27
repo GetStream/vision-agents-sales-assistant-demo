@@ -13,6 +13,7 @@ dependencies:
     sdk: flutter
   http: ^1.5.0
   macos_window_utils: ^1.6.0
+  shared_preferences: ^2.5.0
   stream_chat: ^9.5.0
   stream_video_flutter: ^1.2.4
   stream_video_screen_sharing: ^1.2.4

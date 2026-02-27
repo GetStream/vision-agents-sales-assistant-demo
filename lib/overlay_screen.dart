@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:stream_chat/stream_chat.dart' as chat;
 import 'package:stream_video_flutter/stream_video_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -13,25 +14,35 @@ class OverlayScreen extends StatefulWidget {
     super.key,
     required this.videoClient,
     required this.chatClient,
+    required this.agentServerUrl,
+    required this.onOpenSettings,
   });
 
   final StreamVideo videoClient;
   final chat.StreamChatClient chatClient;
+  final String agentServerUrl;
+  final VoidCallback onOpenSettings;
 
   @override
   State<OverlayScreen> createState() => _OverlayScreenState();
 }
 
 class _OverlayScreenState extends State<OverlayScreen> {
-  final _agentService = AgentService();
+  late final AgentService _agentService = AgentService(
+    baseUrl: widget.agentServerUrl,
+  );
   final _suggestions = <_Suggestion>[];
   final _scrollController = ScrollController();
 
   Call? _call;
   chat.Channel? _chatChannel;
   StreamSubscription<chat.Event>? _chatSubscription;
+  static const _windowChannel = MethodChannel('sales_assistant/window');
+
   bool _isActive = false;
   bool _isStarting = false;
+  bool _showingContext = false;
+  bool _screenCaptureVisible = false;
   String _status = 'Ready';
   String _meetingContext = '';
 
@@ -234,82 +245,143 @@ class _OverlayScreenState extends State<OverlayScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // Context dialog
+  // Screen capture visibility toggle
   // ---------------------------------------------------------------------------
 
-  void _showContextDialog() {
+  Future<void> _toggleScreenCaptureVisibility() async {
+    final newValue = !_screenCaptureVisible;
+    await _windowChannel.invokeMethod('setScreenCaptureVisible', newValue);
+    setState(() => _screenCaptureVisible = newValue);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Context screen (inline, same style as settings)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildContextScreen() {
     final controller = TextEditingController(text: _meetingContext);
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black26,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xDD1a1a2e),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: Text(
-          'Meeting Context',
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.8),
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 48, 28, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Meeting Context',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.white.withValues(alpha: 0.85),
+              letterSpacing: -0.5,
+            ),
           ),
-        ),
-        content: TextField(
-          controller: controller,
-          minLines: 3,
-          maxLines: 5,
-          autofocus: true,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.85),
-            fontSize: 13,
+          const SizedBox(height: 4),
+          Text(
+            'Give the AI context about your meeting.',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.35),
+            ),
           ),
-          cursorColor: Colors.white.withValues(alpha: 0.5),
-          decoration: InputDecoration(
-            hintText:
-                'e.g. "Enterprise SaaS sales call with a CTO"\n'
-                'or "Technical interview for a senior engineer"',
-            hintStyle: TextStyle(
-              color: Colors.white.withValues(alpha: 0.2),
+          const SizedBox(height: 28),
+          Text(
+            'Context',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Colors.white.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: controller,
+            minLines: 3,
+            maxLines: 5,
+            autofocus: true,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.85),
               fontSize: 13,
             ),
-            filled: true,
-            fillColor: Colors.white.withValues(alpha: 0.05),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(
-                color: Colors.white.withValues(alpha: 0.08),
+            cursorColor: Colors.white.withValues(alpha: 0.5),
+            decoration: InputDecoration(
+              hintText:
+                  'e.g. "Enterprise SaaS sales call with a CTO"\n'
+                  'or "Technical interview for a senior engineer"',
+              hintStyle: TextStyle(
+                color: Colors.white.withValues(alpha: 0.2),
+                fontSize: 13,
               ),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(
-                color: Colors.white.withValues(alpha: 0.08),
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.05),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
               ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(
-                color: Colors.white.withValues(alpha: 0.15),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.15),
+                ),
               ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              'Cancel',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+          const SizedBox(height: 6),
+          Text(
+            'This context is sent to the AI agent when\n'
+            'you start a coaching session.',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: 0.25),
             ),
           ),
-          TextButton(
-            onPressed: () {
-              setState(() => _meetingContext = controller.text);
-              Navigator.pop(ctx);
-            },
-            child: Text(
-              'Save',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-            ),
+          const Spacer(),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () => setState(() => _showingContext = false),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white.withValues(alpha: 0.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('Cancel'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _meetingContext = controller.text;
+                      _showingContext = false;
+                    });
+                  },
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.1),
+                    foregroundColor: Colors.white.withValues(alpha: 0.8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('Save'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -322,6 +394,8 @@ class _OverlayScreenState extends State<OverlayScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_showingContext) return _buildContextScreen();
+
     return Column(
       children: [
         _buildHeader(),
@@ -370,7 +444,26 @@ class _OverlayScreenState extends State<OverlayScreen> {
                 ),
               const Spacer(),
               IconButton(
-                onPressed: _isActive ? null : _showContextDialog,
+                onPressed: _toggleScreenCaptureVisibility,
+                icon: Icon(
+                  _screenCaptureVisible
+                      ? Icons.visibility_rounded
+                      : Icons.visibility_off_rounded,
+                  size: 18,
+                  color: _screenCaptureVisible
+                      ? Colors.white.withValues(alpha: 0.6)
+                      : Colors.white.withValues(alpha: 0.25),
+                ),
+                tooltip: _screenCaptureVisible
+                    ? 'Visible to screen capture'
+                    : 'Hidden from screen capture',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              IconButton(
+                onPressed: _isActive
+                    ? null
+                    : () => setState(() => _showingContext = true),
                 icon: Icon(
                   Icons.tune_rounded,
                   size: 18,
@@ -379,6 +472,19 @@ class _OverlayScreenState extends State<OverlayScreen> {
                       : Colors.white.withValues(alpha: 0.4),
                 ),
                 tooltip: 'Meeting context',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              IconButton(
+                onPressed: _isActive ? null : widget.onOpenSettings,
+                icon: Icon(
+                  Icons.settings_rounded,
+                  size: 18,
+                  color: _isActive
+                      ? Colors.white.withValues(alpha: 0.15)
+                      : Colors.white.withValues(alpha: 0.4),
+                ),
+                tooltip: 'Settings',
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),

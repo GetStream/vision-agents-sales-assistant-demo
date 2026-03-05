@@ -43,7 +43,7 @@ class _OverlayScreenState extends State<OverlayScreen> {
   bool _isStarting = false;
   bool _showingContext = false;
   bool _screenCaptureVisible = false;
-  bool _showTranscripts = false;
+  bool _showTranscripts = true;
   String _status = 'Ready';
   String _meetingContext = '';
 

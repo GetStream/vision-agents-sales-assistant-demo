@@ -20,15 +20,17 @@ class AgentService {
     );
   }
 
+  String? _callId;
+
   /// Start a new agent session for the given call.
   Future<String> startSession({
     required String callId,
     String callType = 'default',
   }) async {
     final response = await http.post(
-      Uri.parse('$baseUrl/sessions'),
+      Uri.parse('$baseUrl/calls/$callId/sessions'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'call_id': callId, 'call_type': callType}),
+      body: jsonEncode({'call_type': callType}),
     );
 
     if (response.statusCode != 200 && response.statusCode != 201) {
@@ -40,19 +42,22 @@ class AgentService {
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     _sessionId = data['session_id'] as String?;
+    _callId = callId;
     return _sessionId ?? '';
   }
 
   /// Stop the current agent session.
   Future<void> stopSession() async {
     final sid = _sessionId;
-    if (sid == null) return;
+    final cid = _callId;
+    if (sid == null || cid == null) return;
 
     try {
-      await http.delete(Uri.parse('$baseUrl/sessions/$sid'));
+      await http.delete(Uri.parse('$baseUrl/calls/$cid/sessions/$sid'));
     } catch (_) {
       // Best effort — the server may already be down.
     }
     _sessionId = null;
+    _callId = null;
   }
 }

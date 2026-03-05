@@ -823,7 +823,7 @@ packages:
     description:
       path: "."
       ref: "feature/macos-screen-audio-capture"
-      resolved-ref: "817b8b0a52ae2ccd6d0a71fc5612951e6ca76ef4"
+      resolved-ref: "51eb6dbea6ea8ffc0645b0526e83bdee202095d9"
       url: "https://github.com/GetStream/webrtc-flutter.git"
     source: git
     version: "2.2.4"

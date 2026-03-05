@@ -87,7 +87,13 @@ class _OverlayScreenState extends State<OverlayScreen> {
       await call.join(
         connectOptions: CallConnectOptions(
           camera: TrackOption.disabled(),
-          microphone: TrackOption.enabled(),
+          microphone: TrackOption.enabled(
+            constraints: const AudioConstraints(
+              autoGainControl: false,
+              echoCancellation: false,
+              noiseSuppression: false,
+            ),
+          ),
           screenShare: TrackOption.enabled(
             constraints: const ScreenShareConstraints(
               captureScreenAudio: true,

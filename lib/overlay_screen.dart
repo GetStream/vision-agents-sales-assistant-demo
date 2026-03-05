@@ -43,6 +43,7 @@ class _OverlayScreenState extends State<OverlayScreen> {
   bool _isStarting = false;
   bool _showingContext = false;
   bool _screenCaptureVisible = false;
+  bool _showTranscripts = false;
   String _status = 'Ready';
   String _meetingContext = '';
 
@@ -190,13 +191,19 @@ class _OverlayScreenState extends State<OverlayScreen> {
       if (message == null) return;
 
       final senderId = message.user?.id;
-      if (senderId != _agentUserId) return;
-
       final text = message.text;
       if (text == null || text.isEmpty) return;
 
+      final isAgent = senderId == _agentUserId;
+
+      if (!isAgent && !_showTranscripts) return;
+
       if (event.type == 'message.new') {
-        _addSuggestion(text, messageId: message.id);
+        _addSuggestion(
+          text,
+          messageId: message.id,
+          isTranscript: !isAgent,
+        );
       } else if (event.type == 'message.updated') {
         _updateSuggestion(message.id, text);
       }
@@ -212,6 +219,7 @@ class _OverlayScreenState extends State<OverlayScreen> {
     String? messageId,
     bool isSystem = false,
     bool isError = false,
+    bool isTranscript = false,
   }) {
     setState(() {
       _suggestions.add(
@@ -221,6 +229,7 @@ class _OverlayScreenState extends State<OverlayScreen> {
           messageId: messageId,
           isSystem: isSystem,
           isError: isError,
+          isTranscript: isTranscript,
         ),
       );
     });
@@ -461,6 +470,24 @@ class _OverlayScreenState extends State<OverlayScreen> {
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
               IconButton(
+                onPressed: () =>
+                    setState(() => _showTranscripts = !_showTranscripts),
+                icon: Icon(
+                  _showTranscripts
+                      ? Icons.subtitles_rounded
+                      : Icons.subtitles_off_rounded,
+                  size: 18,
+                  color: _showTranscripts
+                      ? Colors.blueAccent.withValues(alpha: 0.6)
+                      : Colors.white.withValues(alpha: 0.25),
+                ),
+                tooltip: _showTranscripts
+                    ? 'Hide transcripts'
+                    : 'Show transcripts',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              IconButton(
                 onPressed: _isActive
                     ? null
                     : () => setState(() => _showingContext = true),
@@ -598,6 +625,7 @@ class _Suggestion {
     this.messageId,
     this.isSystem = false,
     this.isError = false,
+    this.isTranscript = false,
   });
 
   String text;
@@ -605,6 +633,7 @@ class _Suggestion {
   final String? messageId;
   final bool isSystem;
   final bool isError;
+  final bool isTranscript;
 }
 
 // -----------------------------------------------------------------------------
@@ -626,6 +655,10 @@ class _SuggestionCard extends StatelessWidget {
       bgColor = Colors.redAccent.withValues(alpha: 0.12);
       textColor = Colors.redAccent.shade100.withValues(alpha: 0.95);
       timeColor = Colors.redAccent.withValues(alpha: 0.35);
+    } else if (suggestion.isTranscript) {
+      bgColor = Colors.blueAccent.withValues(alpha: 0.08);
+      textColor = Colors.white.withValues(alpha: 0.55);
+      timeColor = Colors.blueAccent.withValues(alpha: 0.25);
     } else if (suggestion.isSystem) {
       bgColor = Colors.white.withValues(alpha: 0.05);
       textColor = Colors.white.withValues(alpha: 0.45);
@@ -652,14 +685,40 @@ class _SuggestionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            suggestion.text,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 13,
-              height: 1.45,
+          if (suggestion.isTranscript)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, right: 6),
+                  child: Icon(
+                    Icons.mic_rounded,
+                    size: 13,
+                    color: Colors.blueAccent.withValues(alpha: 0.4),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    suggestion.text,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 12,
+                      height: 1.4,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            Text(
+              suggestion.text,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 13,
+                height: 1.45,
+              ),
             ),
-          ),
           const SizedBox(height: 4),
           Align(
             alignment: Alignment.centerRight,
